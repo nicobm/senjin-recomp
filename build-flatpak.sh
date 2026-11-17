@@ -195,9 +195,12 @@ flatpak_origin_of() {
 # reinstalled from senjin-local below, never before: deleting them first would
 # leave `flatpak update` with refs whose origin does not exist.
 STALE_ORIGINS=""
+# `flatpak list --columns=ref` prints refs without the kind prefix
+# (io.github.senjinaleste.Recomp/x86_64/master), unlike `flatpak remote-ls`;
+# accept both spellings.
 for ref in $(flatpak list --user --all --columns=ref 2>/dev/null); do
     case "$ref" in
-        app/"$APP_ID"/*|runtime/"$DEBUG_ID"/*) ;;
+        app/"$APP_ID"/*|"$APP_ID"/*|runtime/"$DEBUG_ID"/*|"$DEBUG_ID"/*) ;;
         *) continue ;;
     esac
     origin=$(flatpak_origin_of "$ref")
@@ -221,25 +224,47 @@ flatpak-builder --user --force-clean --disable-rofiles-fuse \
 repo_uri=$(python3 -c 'import pathlib, sys
 print(pathlib.Path(sys.argv[1]).as_uri())' "$PWD/repo")
 
+# Do not add --no-enumerate: flatpak hides the refs of a no-enumerate remote
+# from `flatpak remote-ls` unless it has an xa.main-ref set (see
+# flatpak_dir_list_remote_refs), and `flatpak remote-add` does not set one, so
+# the remote would be listed but appear empty.  The remote is disabled after
+# the install instead, which also keeps it out of app stores and updates.
 if flatpak_has_remote --user "$LOCAL_REMOTE"; then
-    flatpak remote-modify --user --no-gpg-verify --no-enumerate --no-use-for-deps \
+    flatpak remote-modify --user --no-gpg-verify --no-use-for-deps --enumerate \
         --enable --url="$repo_uri" "$LOCAL_REMOTE"
 else
-    flatpak remote-add --user --no-gpg-verify --no-enumerate --no-use-for-deps \
+    flatpak remote-add --user --no-gpg-verify --no-use-for-deps \
         "$LOCAL_REMOTE" "$repo_uri"
 fi
 
 # Install the app, plus the debug runtime when this build exported one.
+# `flatpak remote-ls` prints full refs, `flatpak list` prints them without the
+# kind prefix; both spellings are accepted here.
+refs=$(flatpak remote-ls --user --all --columns=ref "$LOCAL_REMOTE" 2>/dev/null || true)
+
 set --
-while IFS= read -r ref; do
-    case "$ref" in
-        app/"$APP_ID"/*|runtime/"$DEBUG_ID"/*) set -- "$@" "$ref" ;;
-    esac
-done <<EOF
-$(flatpak remote-ls --user --all --columns=ref "$LOCAL_REMOTE" 2>/dev/null || true)
+if [ -n "$refs" ]; then
+    while IFS= read -r ref; do
+        case "$ref" in
+            app/"$APP_ID"/*|runtime/"$DEBUG_ID"/*) set -- "$@" "$ref" ;;
+            "$APP_ID"/*) set -- "$@" "app/$ref" ;;
+            "$DEBUG_ID"/*) set -- "$@" "runtime/$ref" ;;
+        esac
+    done <<EOF
+$refs
 EOF
+else
+    # The remote could not be listed: use the refs the export just wrote
+    # (repo/refs/heads/<kind>/<id>/<arch>/<branch>).
+    for ref in "$PWD"/repo/refs/heads/app/"$APP_ID"/*/* \
+               "$PWD"/repo/refs/heads/runtime/"$DEBUG_ID"/*/*; do
+        [ -f "$ref" ] || continue
+        set -- "$@" "${ref#"$PWD"/repo/refs/heads/}"
+    done
+fi
 [ "$#" -gt 0 ] || {
     echo "error: $LOCAL_REMOTE ($repo_uri) does not provide $APP_ID" >&2
+    echo "  check it with: flatpak remote-ls --user $LOCAL_REMOTE" >&2
     exit 1
 }
 
@@ -249,7 +274,7 @@ flatpak install --user --reinstall --noninteractive "$LOCAL_REMOTE" "$@"
 # remote; it is only debug symbols, so drop it instead of keeping the remote.
 for ref in $(flatpak list --user --all --columns=ref 2>/dev/null); do
     case "$ref" in
-        runtime/"$DEBUG_ID"/*) ;;
+        runtime/"$DEBUG_ID"/*|"$DEBUG_ID"/*) ;;
         *) continue ;;
     esac
     [ "$(flatpak_origin_of "$ref")" = "$LOCAL_REMOTE" ] && continue

@@ -60,8 +60,8 @@ from the URLs in the script), then:
 cp "/path/to/your/dump.zip" game.zip
 flatpak-builder --user --force-clean --disable-rofiles-fuse --repo=repo \
     build-dir io.github.senjinaleste.Recomp.json
-flatpak remote-add --user --if-not-exists --no-gpg-verify --no-enumerate \
-    --no-use-for-deps senjin-local "file://$PWD/repo"
+flatpak remote-add --user --if-not-exists --no-gpg-verify --no-use-for-deps \
+    senjin-local "file://$PWD/repo"
 flatpak install --user --reinstall senjin-local \
     io.github.senjinaleste.Recomp//master
 flatpak remote-modify --user --disable senjin-local
@@ -116,7 +116,7 @@ repository.
   `repo/` first, then remove the remotes:
 
   ```sh
-  flatpak remote-add --user --if-not-exists --no-gpg-verify --no-enumerate \
+  flatpak remote-add --user --if-not-exists --no-gpg-verify \
       --no-use-for-deps senjin-local "file://$PWD/repo"
   flatpak install --user --reinstall senjin-local \
       io.github.senjinaleste.Recomp//master \
