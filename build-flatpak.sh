@@ -4,11 +4,15 @@
 # Run this inside `toolbox enter` (the Fedora toolbox has flatpak-builder),
 # from the repository root:
 #
-#   ./build-flatpak.sh "/path/to/your/game/dump.zip"
+#   ./build-flatpak.sh [--debug] "/path/to/your/game/dump.zip"
 #
 # or copy your dump to game.zip and run:
 #
-#   ./build-flatpak.sh
+#   ./build-flatpak.sh [--debug]
+#
+# --debug also installs the <app-id>.Debug runtime (the debug symbols that
+# flatpak-builder splits out of the build); it is only useful with gdb and is
+# not needed to play, so it is not installed by default.
 #
 # The manifest uses this directory as its source tree and a generic game.zip
 # for the game data: the repository never hardcodes the name of a particular
@@ -27,6 +31,16 @@ cd "$(dirname "$0")"
 APP_ID="io.github.senjinaleste.Recomp"
 DEBUG_ID="$APP_ID.Debug"
 LOCAL_REMOTE="senjin-local"
+
+# --debug: also install the debug runtime (see the comment at the top).
+WITH_DEBUG=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --debug) WITH_DEBUG=1; shift ;;
+        --) shift; break ;;
+        *) break ;;
+    esac
+done
 
 # 1. Flatpak tooling.
 command -v flatpak >/dev/null 2>&1 || {
@@ -244,7 +258,8 @@ else
         "$LOCAL_REMOTE" "$repo_uri"
 fi
 
-# Install the app, plus the debug runtime when this build exported one.
+# Install the app, plus the debug runtime only with --debug: installing the
+# app does not pull its debug extension.
 # `flatpak remote-ls` prints full refs, `flatpak list` prints them without the
 # kind prefix; both spellings are accepted here.
 refs=$(flatpak remote-ls --user --all --columns=ref "$LOCAL_REMOTE" 2>/dev/null || true)
@@ -253,9 +268,14 @@ set --
 if [ -n "$refs" ]; then
     while IFS= read -r ref; do
         case "$ref" in
-            app/"$APP_ID"/*|runtime/"$DEBUG_ID"/*) set -- "$@" "$ref" ;;
+            app/"$APP_ID"/*) set -- "$@" "$ref" ;;
             "$APP_ID"/*) set -- "$@" "app/$ref" ;;
-            "$DEBUG_ID"/*) set -- "$@" "runtime/$ref" ;;
+            runtime/"$DEBUG_ID"/*)
+                if [ "$WITH_DEBUG" = 1 ]; then set -- "$@" "$ref"; fi
+                ;;
+            "$DEBUG_ID"/*)
+                if [ "$WITH_DEBUG" = 1 ]; then set -- "$@" "runtime/$ref"; fi
+                ;;
         esac
     done <<EOF
 $refs
@@ -263,11 +283,16 @@ EOF
 else
     # The remote could not be listed: use the refs the export just wrote
     # (repo/refs/heads/<kind>/<id>/<arch>/<branch>).
-    for ref in "$PWD"/repo/refs/heads/app/"$APP_ID"/*/* \
-               "$PWD"/repo/refs/heads/runtime/"$DEBUG_ID"/*/*; do
+    for ref in "$PWD"/repo/refs/heads/app/"$APP_ID"/*/*; do
         [ -f "$ref" ] || continue
         set -- "$@" "${ref#"$PWD"/repo/refs/heads/}"
     done
+    if [ "$WITH_DEBUG" = 1 ]; then
+        for ref in "$PWD"/repo/refs/heads/runtime/"$DEBUG_ID"/*/*; do
+            [ -f "$ref" ] || continue
+            set -- "$@" "${ref#"$PWD"/repo/refs/heads/}"
+        done
+    fi
 fi
 [ "$#" -gt 0 ] || {
     echo "error: $LOCAL_REMOTE ($repo_uri) does not provide $APP_ID" >&2
@@ -277,17 +302,19 @@ fi
 
 flatpak install --user --reinstall --noninteractive "$LOCAL_REMOTE" "$@"
 
-# A debug runtime that this build did not export would still point at an old
-# remote; it is only debug symbols, so drop it instead of keeping the remote.
-for ref in $(flatpak list --user --all --columns=ref 2>/dev/null); do
-    case "$ref" in
-        runtime/"$DEBUG_ID"/*|"$DEBUG_ID"/*) ;;
-        *) continue ;;
-    esac
-    [ "$(flatpak_origin_of "$ref")" = "$LOCAL_REMOTE" ] && continue
-    echo "Removing the stale debug runtime $ref..."
-    flatpak uninstall --user -y --noninteractive "$ref" >/dev/null 2>&1 || true
-done
+# The debug runtime is opt-in: remove one left installed by an older build (or
+# installed by hand) so it stops showing up as a pinned runtime in
+# `flatpak uninstall --unused`.  Run the script with --debug to keep it.
+if [ "$WITH_DEBUG" = 0 ]; then
+    for ref in $(flatpak list --user --all --columns=ref 2>/dev/null); do
+        case "$ref" in
+            runtime/"$DEBUG_ID"/*|"$DEBUG_ID"/*) ;;
+            *) continue ;;
+        esac
+        echo "Removing the debug runtime $ref (use --debug to keep it)..."
+        flatpak uninstall --user -y --noninteractive "$ref" >/dev/null 2>&1 || true
+    done
+fi
 
 # Local builds are updated by running this script, not by `flatpak update`.
 flatpak remote-modify --user --disable "$LOCAL_REMOTE" ||

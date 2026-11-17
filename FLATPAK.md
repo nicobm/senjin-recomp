@@ -47,6 +47,12 @@ through a single local remote called `senjin-local`. The manifest uses this
 directory as its source tree (`{"type": "dir", "path": "."}`), so it always
 builds the checkout you are running from; no source snapshot is needed.
 
+`flatpak-builder` splits the debug symbols of the binary into a separate
+`io.github.senjinaleste.Recomp.Debug` runtime. It is **not** needed to play:
+the script does not install it and removes one left by an older build, so it
+does not appear as a pinned runtime in `flatpak uninstall --unused`. If you
+want the symbols for `gdb`, run `./build-flatpak.sh --debug`.
+
 The remote is left disabled after the install: the app is built locally, so
 `flatpak update` has nothing to fetch and stays quiet, even if you later move
 or delete the checkout. **To update the app, run `./build-flatpak.sh`
@@ -227,6 +233,17 @@ rm -rf ~/.var/app/io.github.senjinaleste.Recomp
 used by `./build-flatpak.sh`, and the remote is disabled, so `flatpak update`
 never reads them. Keep `repo/` if you plan to rebuild (the next build reuses
 it); deleting it only makes the next export start from scratch.
+
+`flatpak uninstall --unused` may report that
+`runtime/org.freedesktop.Sdk/x86_64/26.08` is pinned and will not be removed.
+That is normal: flatpak pins every runtime it installs explicitly, and the SDK
+is only used to build. It is not an error, and keeping it avoids downloading
+the SDK again on the next build. To drop it anyway:
+
+```sh
+flatpak pin --remove runtime/org.freedesktop.Sdk/x86_64/26.08
+flatpak uninstall --unused
+```
 
 ## Legal
 
