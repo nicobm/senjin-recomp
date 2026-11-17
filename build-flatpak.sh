@@ -70,7 +70,14 @@ flatpak_ref_installed() {
 }
 
 flatpak_has_remote() {
-    flatpak remotes "$1" --columns=name 2>/dev/null | grep -qx "$2"
+    # `flatpak remotes` hides disabled remotes unless --show-disabled is given,
+    # and senjin-local is disabled between builds; without it, a second run
+    # would not find the remote and `remote-add` would fail with
+    # "Remote senjin-local already exists".  Older flatpak has no
+    # --show-disabled, so fall back to the plain listing.
+    remotes=$(flatpak remotes "$1" --show-disabled --columns=name 2>/dev/null) ||
+        remotes=$(flatpak remotes "$1" --columns=name 2>/dev/null) || return 1
+    printf '%s\n' "$remotes" | grep -qx "$2"
 }
 
 install_flatpak_ref() {

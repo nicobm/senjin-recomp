@@ -143,7 +143,8 @@ flatpak run io.github.senjinaleste.Recomp
 `flatpak update` leaves the app alone on purpose (the `senjin-local` remote is
 disabled): rebuild with `./build-flatpak.sh` to get a new version, and check
 `flatpak list --app` / `flatpak remote-ls senjin-local` to see what is
-installed locally.
+installed locally. `flatpak remotes` hides disabled remotes, so `senjin-local`
+only shows up there with `flatpak remotes --show-disabled`.
 
 If the menu entry does not appear immediately, log out and back in (or check
 that the app is installed with `flatpak list --app`). The icon is a
