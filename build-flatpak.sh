@@ -16,8 +16,17 @@
 # 26.08 are installed automatically if they are missing, and the Python build
 # dependencies are downloaded into flatpak/wheels/ on the first run; the
 # Flatpak build itself has no network access.
+#
+# The result is exported to the persistent repo/ directory and installed
+# through one local remote, "senjin-local", which is left disabled: the app
+# is built locally, so `flatpak update` has nothing to fetch.  To update it,
+# run this script again.
 set -eu
 cd "$(dirname "$0")"
+
+APP_ID="io.github.senjinaleste.Recomp"
+DEBUG_ID="$APP_ID.Debug"
+LOCAL_REMOTE="senjin-local"
 
 # 1. Flatpak tooling.
 command -v flatpak >/dev/null 2>&1 || {
@@ -156,18 +165,114 @@ mkdir -p "$WHEELS"
 fetch_wheel "$CAPSTONE_URL" "$WHEELS/$CAPSTONE" "$CAPSTONE_SHA256"
 fetch_wheel "$PEFILE_URL" "$WHEELS/$PEFILE" "$PEFILE_SHA256"
 
-# Remove stale origin remotes left by previous builds.  flatpak-builder
-# --install creates an origin remote (recomp-origin, debug-origin) that
-# points at the exported repository; after a --force-clean rebuild that
-# repository path no longer exists, which is what makes `flatpak update`
-# complain that the master ref is missing.  Dropping them here lets the
-# build recreate them pointing at the persistent repository below.
-flatpak remote-delete --user recomp-origin 2>/dev/null || true
-flatpak remote-delete --user debug-origin 2>/dev/null || true
+# 5. Build, export and install for the current user.
+#
+#    `flatpak-builder --install` installs the app through throw-away
+#    "<last-id-component>-origin" remotes (recomp-origin, debug-origin, and
+#    recomp1-origin/... when those names are taken).  Those remotes point at
+#    the repository of one particular build, so as soon as the checkout moves,
+#    or the repository is rebuilt elsewhere, every `flatpak update` prints
+#
+#      No se encontró la ref. «app/io.github.senjinaleste.Recomp/x86_64/master»
+#      en el remoto recomp-origin
+#
+#    and keeps doing it until the remote is deleted.  Deleting the remote
+#    alone is not enough either: flatpak then cannot resolve the origin of the
+#    installed refs and reports "Remote ... not found".
+#
+#    Instead, export into the persistent repo/ directory and install from one
+#    stable local remote, "senjin-local".  The remote is left disabled: the
+#    app is built locally, so `flatpak update` has nothing to fetch, and a
+#    disabled remote cannot fail later (for example if repo/ is deleted).  To
+#    update the app, run this script again.
 
-# 5. Build and install for the current user.  Export into a persistent
-#    repository (repo/) instead of the ephemeral build-dir so the origin
-#    remotes created by --install keep pointing at a repository that
-#    survives the next --force-clean rebuild.
-exec flatpak-builder --user --install --force-clean --disable-rofiles-fuse \
-    --repo=repo build-dir io.github.senjinaleste.Recomp.json
+flatpak_origin_of() {
+    flatpak info --user --show-origin "$1" 2>/dev/null || true
+}
+
+# Origin remotes used by an app or debug runtime installed by an older
+# version of this script.  They are deleted after the refs have been
+# reinstalled from senjin-local below, never before: deleting them first would
+# leave `flatpak update` with refs whose origin does not exist.
+STALE_ORIGINS=""
+for ref in $(flatpak list --user --all --columns=ref 2>/dev/null); do
+    case "$ref" in
+        app/"$APP_ID"/*|runtime/"$DEBUG_ID"/*) ;;
+        *) continue ;;
+    esac
+    origin=$(flatpak_origin_of "$ref")
+    case "$origin" in
+        ""|-|"$LOCAL_REMOTE") continue ;;
+        *-origin) ;;
+        *) continue ;;
+    esac
+    case " $STALE_ORIGINS " in
+        *" $origin "*) ;;
+        *) STALE_ORIGINS="$STALE_ORIGINS $origin" ;;
+    esac
+done
+
+echo "Building $APP_ID (this takes a few minutes)..."
+flatpak-builder --user --force-clean --disable-rofiles-fuse \
+    --repo="$PWD/repo" build-dir io.github.senjinaleste.Recomp.json
+
+# The remote URL is a file:// URI; the checkout path may contain spaces, so
+# let Python escape it.
+repo_uri=$(python3 -c 'import pathlib, sys
+print(pathlib.Path(sys.argv[1]).as_uri())' "$PWD/repo")
+
+if flatpak_has_remote --user "$LOCAL_REMOTE"; then
+    flatpak remote-modify --user --no-gpg-verify --no-enumerate --no-use-for-deps \
+        --enable --url="$repo_uri" "$LOCAL_REMOTE"
+else
+    flatpak remote-add --user --no-gpg-verify --no-enumerate --no-use-for-deps \
+        "$LOCAL_REMOTE" "$repo_uri"
+fi
+
+# Install the app, plus the debug runtime when this build exported one.
+set --
+while IFS= read -r ref; do
+    case "$ref" in
+        app/"$APP_ID"/*|runtime/"$DEBUG_ID"/*) set -- "$@" "$ref" ;;
+    esac
+done <<EOF
+$(flatpak remote-ls --user --all --columns=ref "$LOCAL_REMOTE" 2>/dev/null || true)
+EOF
+[ "$#" -gt 0 ] || {
+    echo "error: $LOCAL_REMOTE ($repo_uri) does not provide $APP_ID" >&2
+    exit 1
+}
+
+flatpak install --user --reinstall --noninteractive "$LOCAL_REMOTE" "$@"
+
+# A debug runtime that this build did not export would still point at an old
+# remote; it is only debug symbols, so drop it instead of keeping the remote.
+for ref in $(flatpak list --user --all --columns=ref 2>/dev/null); do
+    case "$ref" in
+        runtime/"$DEBUG_ID"/*) ;;
+        *) continue ;;
+    esac
+    [ "$(flatpak_origin_of "$ref")" = "$LOCAL_REMOTE" ] && continue
+    echo "Removing the stale debug runtime $ref..."
+    flatpak uninstall --user -y --noninteractive "$ref" >/dev/null 2>&1 || true
+done
+
+# Local builds are updated by running this script, not by `flatpak update`.
+flatpak remote-modify --user --disable "$LOCAL_REMOTE" ||
+    echo "warning: could not disable the $LOCAL_REMOTE remote" >&2
+
+# Now the old origin remotes have no installed refs left.  --force is what
+# makes the deletion work: without it flatpak refuses (and prompts to remove
+# the refs) when a remote still has installed refs.
+for remote in $STALE_ORIGINS; do
+    flatpak_has_remote --user "$remote" || continue
+    if flatpak list --user --all --columns=origin 2>/dev/null | grep -qxF "$remote"; then
+        echo "warning: $remote is still the origin of an installed ref; keeping it" >&2
+        continue
+    fi
+    echo "Removing the old Flatpak remote $remote..."
+    flatpak remote-delete --user --force --noninteractive "$remote" >/dev/null 2>&1 ||
+        echo "warning: could not remove the Flatpak remote $remote" >&2
+done
+
+echo "Installed $APP_ID. Run it with: flatpak run $APP_ID"

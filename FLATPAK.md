@@ -41,19 +41,34 @@ Inside `toolbox enter`, from the repository root:
 
 The script copies your dump to the generic name `game.zip`, checks its layout,
 installs the Freedesktop runtime and SDK if they are missing, downloads the two
-Python wheels if they are missing, and runs `flatpak-builder`. The manifest
-uses this directory as its source tree
-(`{"type": "dir", "path": "."}`), so it always builds the checkout you are
-running from; no source snapshot is needed. If you prefer to run
-`flatpak-builder` by hand, make sure `flatpak/wheels/` contains the two wheels
-first (run `./build-flatpak.sh` once, or download them from the URLs in the
-script), then:
+Python wheels if they are missing, builds with `flatpak-builder`, exports the
+result into the persistent `repo/` directory (ignored by git) and installs it
+through a single local remote called `senjin-local`. The manifest uses this
+directory as its source tree (`{"type": "dir", "path": "."}`), so it always
+builds the checkout you are running from; no source snapshot is needed.
+
+The remote is left disabled after the install: the app is built locally, so
+`flatpak update` has nothing to fetch and stays quiet, even if you later move
+or delete the checkout. **To update the app, run `./build-flatpak.sh`
+again**; it rebuilds and reinstalls from the local repository.
+
+If you prefer to run `flatpak-builder` by hand, make sure `flatpak/wheels/`
+contains the two wheels first (run `./build-flatpak.sh` once, or download them
+from the URLs in the script), then:
 
 ```sh
 cp "/path/to/your/dump.zip" game.zip
-flatpak-builder --user --install --force-clean --disable-rofiles-fuse --repo=repo \
+flatpak-builder --user --force-clean --disable-rofiles-fuse --repo=repo \
     build-dir io.github.senjinaleste.Recomp.json
+flatpak remote-add --user --if-not-exists --no-gpg-verify --no-enumerate \
+    --no-use-for-deps senjin-local "file://$PWD/repo"
+flatpak install --user --reinstall senjin-local \
+    io.github.senjinaleste.Recomp//master
+flatpak remote-modify --user --disable senjin-local
 ```
+
+`./build-flatpak.sh` does the same and also installs the debug runtime and
+removes the remotes of older builds.
 
 The manifest uses `game.zip`; no particular dump name is hardcoded in the
 repository.
@@ -85,20 +100,31 @@ repository.
       org.freedesktop.Platform//26.08 org.freedesktop.Sdk//26.08
   ```
 
-- `flatpak update` complains that `.../master` is not found in `recomp-origin`
-  or `debug-origin`: this is a stale origin remote from an older build.
-  `flatpak-builder --install` creates these remotes pointing at its exported
-  repository; after a `--force-clean` rebuild that path changed.  Newer
-  builds use a persistent `repo/` directory and clean these remotes
-  automatically, but an already-installed app keeps the old one.  Remove it
-  once:
+- `flatpak update` reports `No se encontró la ref. «.../master» en el remoto
+  recomp-origin` (or `debug-origin`), or `Unable to update ...: Remote "..."
+  not found`: this comes from an install made by an older `build-flatpak.sh`,
+  which used `flatpak-builder --install`. That command creates throw-away
+  `*-origin` remotes pointing at the repository of one particular build, so
+  they break as soon as the checkout moves or the repository is rebuilt
+  elsewhere. Run `./build-flatpak.sh` again: it reinstalls the app from the
+  `senjin-local` remote and only then deletes the old `*-origin` remotes (in
+  that order, so nothing is left pointing at a deleted remote). Deleting the
+  old remotes by hand without reinstalling first makes `flatpak update` fail
+  with `Remote ... not found` for the installed refs.
+
+  If you only want to clean up without rebuilding, reinstall from the existing
+  `repo/` first, then remove the remotes:
 
   ```sh
-  flatpak remote-delete --user recomp-origin 2>/dev/null || true
-  flatpak remote-delete --user debug-origin 2>/dev/null || true
+  flatpak remote-add --user --if-not-exists --no-gpg-verify --no-enumerate \
+      --no-use-for-deps senjin-local "file://$PWD/repo"
+  flatpak install --user --reinstall senjin-local \
+      io.github.senjinaleste.Recomp//master \
+      io.github.senjinaleste.Recomp.Debug//master
+  flatpak remote-modify --user --disable senjin-local
+  flatpak remote-delete --user --force recomp-origin
+  flatpak remote-delete --user --force debug-origin
   ```
-
-  The next build recreates them pointing at the persistent repository.
 
 ## Run
 
@@ -113,6 +139,11 @@ You can still start it from a terminal:
 ```sh
 flatpak run io.github.senjinaleste.Recomp
 ```
+
+`flatpak update` leaves the app alone on purpose (the `senjin-local` remote is
+disabled): rebuild with `./build-flatpak.sh` to get a new version, and check
+`flatpak list --app` / `flatpak remote-ls senjin-local` to see what is
+installed locally.
 
 If the menu entry does not appear immediately, log out and back in (or check
 that the app is installed with `flatpak list --app`). The icon is a
@@ -181,6 +212,20 @@ rpm-ostree install google-noto-sans-cjk-fonts
 ```
 
 Then restart the app.
+
+## Uninstall
+
+```sh
+flatpak uninstall io.github.senjinaleste.Recomp
+flatpak remote-delete --user senjin-local
+rm -rf ~/.var/app/io.github.senjinaleste.Recomp
+```
+
+`flatpak uninstall` also removes the debug runtime. Removing the
+`senjin-local` remote and the `repo/` directory is optional: they are only
+used by `./build-flatpak.sh`, and the remote is disabled, so `flatpak update`
+never reads them. Keep `repo/` if you plan to rebuild (the next build reuses
+it); deleting it only makes the next export start from scratch.
 
 ## Legal
 
