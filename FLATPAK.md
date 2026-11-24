@@ -13,6 +13,10 @@ supplied by the user and are not part of the repository.
   the container the script installs `flatpak` and `flatpak-builder` with `dnf`
   if they are missing. Use `SENJIN_TOOLBOX=name` to choose another container,
   or enter one yourself with `toolbox enter` and run the script there.
+  On systems without Toolbx (Debian, Arch, Alpine, plain Fedora, ...) the
+  script does not install anything on the host: it prints the package-manager
+  command for the detected distribution (`apt`, `dnf`, `pacman`, `zypper`,
+  `apk`, `rpm-ostree`, ...).
 
   To do it by hand instead:
 

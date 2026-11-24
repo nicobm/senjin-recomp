@@ -6,7 +6,9 @@
 # creating it (and downloading the Fedora toolbox image after answering yes
 # automatically) if needed; inside, it installs flatpak-builder with dnf when
 # missing.  Set SENJIN_TOOLBOX to use another container name, or run the script
-# inside `toolbox enter` yourself.
+# inside `toolbox enter` yourself.  Without toolbox (Debian, Arch, Alpine,
+# plain Fedora, ...) it does not touch the host: it prints the install command
+# for the detected package manager and exits.
 #
 #   ./build-flatpak.sh [--debug] "/path/to/your/game/dump.zip"
 #   ./build-flatpak.sh [--debug] /path/to/dump.rar
@@ -57,15 +59,75 @@ toolbox_has_container() {
         awk -v name="$1" '$2 == name { found = 1 } END { exit !found }'
 }
 
+# Systems without Toolbx (Debian, Arch, Alpine, plain Fedora, ...): do not
+# touch the host, just explain the command for the local package manager.
+print_install_hint() {
+    os_name=$(
+        if [ -r /etc/os-release ]; then
+            . /etc/os-release
+            printf '%s' "${PRETTY_NAME:-${NAME:-your distribution}}"
+        else
+            printf '%s' "your distribution"
+        fi
+    )
+    echo "  Detected: $os_name" >&2
+    if command -v rpm-ostree >/dev/null 2>&1; then
+        echo "  Install them with:" >&2
+        echo "    sudo rpm-ostree install flatpak flatpak-builder" >&2
+        echo "  (or install Toolbx: sudo rpm-ostree install toolbox, then reboot)" >&2
+    elif command -v apt >/dev/null 2>&1; then
+        echo "  Install them with:" >&2
+        echo "    sudo apt install flatpak flatpak-builder" >&2
+    elif command -v apt-get >/dev/null 2>&1; then
+        echo "  Install them with:" >&2
+        echo "    sudo apt-get install flatpak flatpak-builder" >&2
+    elif command -v dnf >/dev/null 2>&1; then
+        echo "  Install them with:" >&2
+        echo "    sudo dnf install flatpak flatpak-builder" >&2
+    elif command -v yum >/dev/null 2>&1; then
+        echo "  Install them with:" >&2
+        echo "    sudo yum install flatpak flatpak-builder" >&2
+    elif command -v pacman >/dev/null 2>&1; then
+        echo "  Install them with:" >&2
+        echo "    sudo pacman -S flatpak flatpak-builder" >&2
+    elif command -v zypper >/dev/null 2>&1; then
+        echo "  Install them with:" >&2
+        echo "    sudo zypper install flatpak flatpak-builder" >&2
+    elif command -v apk >/dev/null 2>&1; then
+        echo "  Install them with:" >&2
+        echo "    sudo apk add flatpak flatpak-builder" >&2
+    elif command -v xbps-install >/dev/null 2>&1; then
+        echo "  Install them with:" >&2
+        echo "    sudo xbps-install -S flatpak flatpak-builder" >&2
+    elif command -v eopkg >/dev/null 2>&1; then
+        echo "  Install them with:" >&2
+        echo "    sudo eopkg install flatpak flatpak-builder" >&2
+    elif command -v emerge >/dev/null 2>&1; then
+        echo "  Install them with:" >&2
+        echo "    sudo emerge --ask sys-apps/flatpak dev-util/flatpak-builder" >&2
+    elif command -v nix-env >/dev/null 2>&1; then
+        echo "  Install them with:" >&2
+        echo "    nix-env -iA nixpkgs.flatpak nixpkgs.flatpak-builder" >&2
+    elif command -v guix >/dev/null 2>&1; then
+        echo "  Install them with:" >&2
+        echo "    guix install flatpak flatpak-builder" >&2
+    else
+        echo "  Install the packages 'flatpak' and 'flatpak-builder' with your" >&2
+        echo "  distribution's package manager." >&2
+    fi
+    echo "  Then run this script again." >&2
+}
+
 # On Fedora Atomic, flatpak-builder lives in a toolbox.  Re-exec there; the
 # global --assumeyes makes `toolbox create` download the Fedora image without
 # asking.  The inner instance installs flatpak-builder with dnf if needed.
+# Without toolbox, point the user at the distribution's package manager.
 if ! in_toolbox && ! in_container &&
         { ! command -v flatpak >/dev/null 2>&1 ||
           ! command -v flatpak-builder >/dev/null 2>&1; }; then
     if ! command -v toolbox >/dev/null 2>&1; then
-        echo "error: flatpak/flatpak-builder are not installed and toolbox is not available" >&2
-        echo "  install toolbox (Fedora Atomic ships it), or install the Flatpak build tools directly" >&2
+        echo "error: flatpak and/or flatpak-builder are missing and toolbox is not available." >&2
+        print_install_hint
         exit 1
     fi
     TOOLBOX_NAME="${SENJIN_TOOLBOX:-senjin-recomped}"
@@ -124,21 +186,23 @@ install_flatpak_packages() {
 
 if ! command -v flatpak >/dev/null 2>&1 ||
         ! command -v flatpak-builder >/dev/null 2>&1; then
-    if { in_toolbox || in_container; } && command -v dnf >/dev/null 2>&1; then
+    if in_toolbox && command -v dnf >/dev/null 2>&1; then
         echo "Installing flatpak and flatpak-builder in the toolbox..."
         if ! install_flatpak_packages; then
-            echo "error: could not install flatpak-builder automatically" >&2
-            echo "  inside the toolbox run: sudo dnf install -y flatpak flatpak-builder" >&2
+            echo "error: could not install flatpak/flatpak-builder automatically." >&2
+            print_install_hint
             exit 1
         fi
     fi
 fi
 command -v flatpak >/dev/null 2>&1 || {
-    echo "error: flatpak is not installed" >&2
+    echo "error: flatpak is not installed." >&2
+    print_install_hint
     exit 1
 }
 command -v flatpak-builder >/dev/null 2>&1 || {
-    echo "error: flatpak-builder is not installed (inside the toolbox: sudo dnf install flatpak-builder)" >&2
+    echo "error: flatpak-builder is not installed." >&2
+    print_install_hint
     exit 1
 }
 
