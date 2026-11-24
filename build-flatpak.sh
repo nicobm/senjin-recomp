@@ -2,7 +2,7 @@
 # Build and install the Flatpak locally.
 #
 # Run this from the repository root.  On Fedora Atomic (Silverblue, Bazzite)
-# the script re-executes itself inside the toolbox container "senjin-recomped",
+# the script re-executes itself inside the toolbox container "senjin-recomp",
 # creating it (and downloading the Fedora toolbox image after answering yes
 # automatically) if needed; inside, it installs flatpak-builder with dnf when
 # missing.  Set SENJIN_TOOLBOX to use another container name, or run the script
@@ -130,7 +130,7 @@ if ! in_toolbox && ! in_container &&
         print_install_hint
         exit 1
     fi
-    TOOLBOX_NAME="${SENJIN_TOOLBOX:-senjin-recomped}"
+    TOOLBOX_NAME="${SENJIN_TOOLBOX:-senjin-recomp}"
     if ! toolbox_has_container "$TOOLBOX_NAME"; then
         echo "Creating the toolbox container $TOOLBOX_NAME..."
         echo "  (the Fedora toolbox image is downloaded automatically if needed)"

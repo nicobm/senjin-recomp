@@ -11,7 +11,7 @@ build-dir/
 repo/
 # local Flatpak inputs (not part of the repository)
 game.zip
-senjin-recomped-*.zip
+senjin-recomp-*.zip
 flatpak/wheels/
 /data/
 # game files

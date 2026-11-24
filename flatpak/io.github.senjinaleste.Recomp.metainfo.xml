@@ -13,8 +13,8 @@
     <p>The game data is supplied by the user and is not included in this package.</p>
   </description>
   <launchable type="desktop-id">io.github.senjinaleste.Recomp.desktop</launchable>
-  <url type="homepage">https://github.com/nicobm/senjin-recomped</url>
-  <url type="bugtracker">https://github.com/nicobm/senjin-recomped/issues</url>
+  <url type="homepage">https://github.com/nicobm/senjin-recomp</url>
+  <url type="bugtracker">https://github.com/nicobm/senjin-recomp/issues</url>
   <categories>
     <category>Game</category>
   </categories>

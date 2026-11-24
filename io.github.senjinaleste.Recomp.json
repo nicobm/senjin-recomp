@@ -61,7 +61,7 @@
                         "build-dir",
                         "data",
                         "game.zip",
-                        "senjin-recomped-*.zip",
+                        "senjin-recomp-*.zip",
                         "wheels",
                         "flatpak",
                         "out",

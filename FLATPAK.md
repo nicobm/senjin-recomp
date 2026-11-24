@@ -8,7 +8,7 @@ supplied by the user and are not part of the repository.
 - A Flatpak host (Fedora Silverblue, Bazzite, ...) with Toolbx. Fedora Atomic
   ships it; on other systems install it with `sudo dnf install toolbox`.
 - `build-flatpak.sh` re-executes itself inside a toolbox container named
-  `senjin-recomped`, creating it if needed. The first create downloads the
+  `senjin-recomp`, creating it if needed. The first create downloads the
   Fedora toolbox image automatically (`toolbox --assumeyes create`), and inside
   the container the script installs `flatpak` and `flatpak-builder` with `dnf`
   if they are missing. Use `SENJIN_TOOLBOX=name` to choose another container,
