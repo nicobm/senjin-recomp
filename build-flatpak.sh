@@ -5,10 +5,15 @@
 # from the repository root:
 #
 #   ./build-flatpak.sh [--debug] "/path/to/your/game/dump.zip"
-#
-# or copy your dump to game.zip and run:
-#
+#   ./build-flatpak.sh [--debug] /path/to/dump.rar
 #   ./build-flatpak.sh [--debug]
+#
+# With no path it searches the XDG Downloads and Documents folders.  The dump
+# may be a .zip, .rar, .7z or an extracted folder: the script looks inside it
+# for senxin_aleste_apm3.exe, checks its SHA-256 against recomp/exe.sha256 and
+# writes a normalized game.zip for the manifest.  The words of a path with
+# spaces are joined again, but the shell still needs parentheses/brackets
+# quoted or escaped: they are shell syntax, not part of this script.
 #
 # --debug also installs the <app-id>.Debug runtime (the debug symbols that
 # flatpak-builder splits out of the build); it is only useful with gdb and is
@@ -16,8 +21,9 @@
 #
 # The manifest uses this directory as its source tree and a generic game.zip
 # for the game data: the repository never hardcodes the name of a particular
-# dump, and no source snapshot is needed.  The Freedesktop Platform and SDK
-# 26.08 are installed automatically if they are missing, and the Python build
+# dump, and no source snapshot is needed.  tools/find_game.py does the
+# searching, hash check and zip normalization.  The Freedesktop Platform and
+# SDK 26.08 are installed automatically if they are missing, and the Python build
 # dependencies are downloaded into flatpak/wheels/ on the first run; the
 # Flatpak build itself has no network access.
 #
@@ -33,13 +39,26 @@ DEBUG_ID="$APP_ID.Debug"
 LOCAL_REMOTE="senjin-local"
 
 # --debug: also install the debug runtime (see the comment at the top).
+# Everything else is the dump path.  Join the remaining words, so an
+# unquoted "Senxin Aleste (...).zip" works too.
 WITH_DEBUG=0
+GAME_INPUT=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --debug) WITH_DEBUG=1; shift ;;
-        --) shift; break ;;
-        *) break ;;
+        --debug) WITH_DEBUG=1 ;;
+        --)
+            shift
+            while [ $# -gt 0 ]; do
+                GAME_INPUT="${GAME_INPUT:+$GAME_INPUT }$1"
+                shift
+            done
+            break
+            ;;
+        *)
+            GAME_INPUT="${GAME_INPUT:+$GAME_INPUT }$1"
+            ;;
     esac
+    shift
 done
 
 # 1. Flatpak tooling.
@@ -53,24 +72,15 @@ command -v flatpak-builder >/dev/null 2>&1 || {
 }
 
 # 2. The user's game data, under the generic name the manifest expects.
-if [ $# -ge 1 ]; then
-    if [ ! -e game.zip ] || [ "$(realpath "$1")" != "$(realpath game.zip)" ]; then
-        cp -f "$1" game.zip
-    fi
+#    find_game.py resolves the XDG Downloads and Documents folders, checks the
+#    executable hash inside zip/rar/7z dumps and writes a normalized game.zip.
+if [ -n "$GAME_INPUT" ]; then
+    python3 tools/find_game.py --sha256-file "$PWD/recomp/exe.sha256" \
+        --output "$PWD/game.zip" --input "$GAME_INPUT"
+else
+    python3 tools/find_game.py --sha256-file "$PWD/recomp/exe.sha256" \
+        --output "$PWD/game.zip"
 fi
-[ -f game.zip ] || {
-    echo "error: game.zip not found; pass the path to your dump or copy it as game.zip" >&2
-    exit 1
-}
-python3 - "$PWD/game.zip" <<'PY'
-import sys, zipfile
-with zipfile.ZipFile(sys.argv[1]) as z:
-    names = z.namelist()
-if "senxin_aleste_apm3.exe" not in names:
-    sys.exit("error: game.zip does not contain senxin_aleste_apm3.exe")
-if not any(n.startswith("windata/") for n in names):
-    sys.exit("error: game.zip does not contain windata/")
-PY
 
 # 3. The Freedesktop runtime and SDK required by the manifest.  Install them
 #    if they are missing: use existing user remotes first, then system remotes

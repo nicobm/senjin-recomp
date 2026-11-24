@@ -26,8 +26,10 @@ supplied by the user and are not part of the repository.
   If you prefer a per-user install, add Flathub to your user installation
   first and use `flatpak install -y --user flathub ...`.
 
-- Your own game dump (the folder with `senxin_aleste_apm3.exe` and `windata/`),
-  zipped.
+- Your own game dump: a `.zip`, `.rar` or `.7z` archive, or the extracted
+  folder with `senxin_aleste_apm3.exe` and `windata/`. With no argument,
+  `build-flatpak.sh` searches the XDG Downloads and Documents folders.
+  Reading RAR/7z needs `bsdtar`, `unrar` or `7z`; ZIP needs nothing extra.
 - `curl` or `wget` for the first build: the script downloads the two Python
   wheels into `flatpak/wheels/`. No source snapshot is needed.
 
@@ -36,14 +38,32 @@ supplied by the user and are not part of the repository.
 Inside `toolbox enter`, from the repository root:
 
 ```sh
-./build-flatpak.sh "/path/to/your/dump.zip"
+./build-flatpak.sh
 ```
 
-The script copies your dump to the generic name `game.zip`, checks its layout,
-installs the Freedesktop runtime and SDK if they are missing, downloads the two
-Python wheels if they are missing, builds with `flatpak-builder`, exports the
-result into the persistent `repo/` directory (ignored by git) and installs it
-through a single local remote called `senjin-local`. The manifest uses this
+With no argument the script searches the XDG Downloads and Documents folders
+for a `.zip`, `.rar` or `.7z`, looks inside for `senxin_aleste_apm3.exe`,
+checks its SHA-256 against [`recomp/exe.sha256`](recomp/exe.sha256) and writes
+the normalized `game.zip` the manifest expects. You can also pass the dump
+explicitly. Spaces are fine without quotes (the script joins the words again),
+but quote or escape shell metacharacters such as the parentheses and brackets
+in dump names:
+
+```sh
+./build-flatpak.sh "/path/to/your/dump.zip"
+./build-flatpak.sh /path/to/SenjinAleste.rar
+./build-flatpak.sh "Senxin Aleste (1.02.00)(2022-01-25)(JPN)[Sega ALLS][TP].zip"
+```
+
+An existing `game.zip` is reused while its executable hash matches, so the
+dump is not copied again on every build. Pass another dump or delete
+`game.zip` to make the script search from scratch.
+
+The script checks the dump layout, installs the Freedesktop runtime and SDK if
+they are missing, downloads the two Python wheels if they are missing, builds
+with `flatpak-builder`, exports the result into the persistent `repo/`
+directory (ignored by git) and installs it through a single local remote called
+`senjin-local`. The manifest uses this
 directory as its source tree (`{"type": "dir", "path": "."}`), so it always
 builds the checkout you are running from; no source snapshot is needed.
 
@@ -63,7 +83,10 @@ contains the two wheels first (run `./build-flatpak.sh` once, or download them
 from the URLs in the script), then:
 
 ```sh
-cp "/path/to/your/dump.zip" game.zip
+# Normalize a zip/rar/7z/folder into game.zip (same check as the script):
+python3 tools/find_game.py --sha256-file recomp/exe.sha256 \
+    --output game.zip --input "/path/to/your/dump.zip"
+
 flatpak-builder --user --force-clean --disable-rofiles-fuse --repo=repo \
     build-dir io.github.senjinaleste.Recomp.json
 flatpak remote-add --user --if-not-exists --no-gpg-verify --no-use-for-deps \
@@ -73,8 +96,8 @@ flatpak install --user --reinstall senjin-local \
 flatpak remote-modify --user --disable senjin-local
 ```
 
-`./build-flatpak.sh` does the same and also installs the debug runtime and
-removes the remotes of older builds.
+`./build-flatpak.sh` does the same, removes the remotes of older builds and
+keeps the debug runtime out unless you pass `--debug`.
 
 The manifest uses `game.zip`; no particular dump name is hardcoded in the
 repository.
