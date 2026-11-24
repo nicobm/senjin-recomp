@@ -1,8 +1,12 @@
 #!/bin/sh
 # Build and install the Flatpak locally.
 #
-# Run this inside `toolbox enter` (the Fedora toolbox has flatpak-builder),
-# from the repository root:
+# Run this from the repository root.  On Fedora Atomic (Silverblue, Bazzite)
+# the script re-executes itself inside the toolbox container "senjin-recomped",
+# creating it (and downloading the Fedora toolbox image after answering yes
+# automatically) if needed; inside, it installs flatpak-builder with dnf when
+# missing.  Set SENJIN_TOOLBOX to use another container name, or run the script
+# inside `toolbox enter` yourself.
 #
 #   ./build-flatpak.sh [--debug] "/path/to/your/game/dump.zip"
 #   ./build-flatpak.sh [--debug] /path/to/dump.rar
@@ -32,15 +36,58 @@
 # is built locally, so `flatpak update` has nothing to fetch.  To update it,
 # run this script again.
 set -eu
-cd "$(dirname "$0")"
+
+SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
+SELF="$SCRIPT_DIR/$(basename "$0")"
+
+in_toolbox() {
+    [ "${SENJIN_IN_TOOLBOX:-0}" = 1 ] && return 0
+    [ -f /run/.toolboxenv ] && return 0
+    return 1
+}
+
+in_container() {
+    [ -f /run/.containerenv ] && return 0
+    [ -f /.dockerenv ] && return 0
+    return 1
+}
+
+toolbox_has_container() {
+    toolbox list --containers 2>/dev/null |
+        awk -v name="$1" '$2 == name { found = 1 } END { exit !found }'
+}
+
+# On Fedora Atomic, flatpak-builder lives in a toolbox.  Re-exec there; the
+# global --assumeyes makes `toolbox create` download the Fedora image without
+# asking.  The inner instance installs flatpak-builder with dnf if needed.
+if ! in_toolbox && ! in_container &&
+        { ! command -v flatpak >/dev/null 2>&1 ||
+          ! command -v flatpak-builder >/dev/null 2>&1; }; then
+    if ! command -v toolbox >/dev/null 2>&1; then
+        echo "error: flatpak/flatpak-builder are not installed and toolbox is not available" >&2
+        echo "  install toolbox (Fedora Atomic ships it), or install the Flatpak build tools directly" >&2
+        exit 1
+    fi
+    TOOLBOX_NAME="${SENJIN_TOOLBOX:-senjin-recomped}"
+    if ! toolbox_has_container "$TOOLBOX_NAME"; then
+        echo "Creating the toolbox container $TOOLBOX_NAME..."
+        echo "  (the Fedora toolbox image is downloaded automatically if needed)"
+        toolbox --assumeyes create --container "$TOOLBOX_NAME"
+    fi
+    echo "Entering the toolbox container $TOOLBOX_NAME..."
+    exec toolbox run --container "$TOOLBOX_NAME" -- \
+        env SENJIN_IN_TOOLBOX=1 "$SELF" "$@"
+fi
+
+cd "$SCRIPT_DIR"
 
 APP_ID="io.github.senjinaleste.Recomp"
 DEBUG_ID="$APP_ID.Debug"
 LOCAL_REMOTE="senjin-local"
 
 # --debug: also install the debug runtime (see the comment at the top).
-# Everything else is the dump path.  Join the remaining words, so an
-# unquoted "Senxin Aleste (...).zip" works too.
+# Everything else is the dump path.  Join the remaining words, so spaces work
+# without quotes; shell metacharacters still need quoting or escaping.
 WITH_DEBUG=0
 GAME_INPUT=""
 while [ $# -gt 0 ]; do
@@ -61,7 +108,31 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-# 1. Flatpak tooling.
+# 1. Flatpak tooling.  Inside the toolbox, install what is missing: Fedora
+#    Atomic hosts cannot dnf-install it, and the toolbox has passwordless sudo.
+install_flatpak_packages() {
+    if [ "$(id -u)" -eq 0 ]; then
+        dnf install -y flatpak flatpak-builder
+    elif sudo dnf install -y flatpak flatpak-builder; then
+        :
+    else
+        # Toolbx gives the user an empty password.  If toolbox run has no TTY,
+        # sudo -S still accepts a newline without asking interactively.
+        printf '\n' | sudo -S dnf install -y flatpak flatpak-builder
+    fi
+}
+
+if ! command -v flatpak >/dev/null 2>&1 ||
+        ! command -v flatpak-builder >/dev/null 2>&1; then
+    if { in_toolbox || in_container; } && command -v dnf >/dev/null 2>&1; then
+        echo "Installing flatpak and flatpak-builder in the toolbox..."
+        if ! install_flatpak_packages; then
+            echo "error: could not install flatpak-builder automatically" >&2
+            echo "  inside the toolbox run: sudo dnf install -y flatpak flatpak-builder" >&2
+            exit 1
+        fi
+    fi
+fi
 command -v flatpak >/dev/null 2>&1 || {
     echo "error: flatpak is not installed" >&2
     exit 1

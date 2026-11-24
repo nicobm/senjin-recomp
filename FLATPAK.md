@@ -5,13 +5,22 @@ supplied by the user and are not part of the repository.
 
 ## Prerequisites
 
-- A Flatpak host (Fedora Silverblue, Bazzite, ...).
-- A toolbox with `flatpak-builder`:
+- A Flatpak host (Fedora Silverblue, Bazzite, ...) with Toolbx. Fedora Atomic
+  ships it; on other systems install it with `sudo dnf install toolbox`.
+- `build-flatpak.sh` re-executes itself inside a toolbox container named
+  `senjin-recomped`, creating it if needed. The first create downloads the
+  Fedora toolbox image automatically (`toolbox --assumeyes create`), and inside
+  the container the script installs `flatpak` and `flatpak-builder` with `dnf`
+  if they are missing. Use `SENJIN_TOOLBOX=name` to choose another container,
+  or enter one yourself with `toolbox enter` and run the script there.
+
+  To do it by hand instead:
 
   ```sh
+  toolbox create --assumeyes
   toolbox enter
   # inside the toolbox, if needed:
-  sudo dnf install flatpak-builder
+  sudo dnf install flatpak flatpak-builder
   ```
 
 - The Freedesktop runtime and SDK 26.08. `build-flatpak.sh` installs them
@@ -35,7 +44,7 @@ supplied by the user and are not part of the repository.
 
 ## Build
 
-Inside `toolbox enter`, from the repository root:
+From the repository root (the script enters the toolbox itself):
 
 ```sh
 ./build-flatpak.sh
