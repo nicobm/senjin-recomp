@@ -174,12 +174,14 @@ while [ $# -gt 0 ]; do
 done
 
 # Run a command as root inside the toolbox.  Toolbx gives passwordless sudo;
-# if sudo still asks (no TTY under toolbox run), -S accepts a newline.
+# if sudo still asks (no TTY under toolbox run), -S accepts a newline.  The
+# probe is silent: `sudo -n` prints "a password is required" when it cannot
+# use the cached credentials, and that is expected inside the toolbox.
 run_as_root() {
     if [ "$(id -u)" -eq 0 ]; then
         "$@"
-    elif sudo -n "$@"; then
-        :
+    elif sudo -n true 2>/dev/null; then
+        sudo "$@"
     else
         printf '\n' | sudo -S "$@"
     fi
