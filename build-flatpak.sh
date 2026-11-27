@@ -5,10 +5,13 @@
 # the script re-executes itself inside the toolbox container "senjin-recomp",
 # creating it (and downloading the Fedora toolbox image after answering yes
 # automatically) if needed; inside, it installs flatpak-builder with dnf when
-# missing.  Set SENJIN_TOOLBOX to use another container name, or run the script
-# inside `toolbox enter` yourself.  Without toolbox (Debian, Arch, Alpine,
-# plain Fedora, ...) it does not touch the host: it prints the install command
-# for the detected package manager and exits.
+# missing.  On every run it also updates the toolbox packages (dnf upgrade)
+# and the Freedesktop runtime/SDK (flatpak update); set SENJIN_NO_UPDATE=1 to
+# skip both, or SENJIN_NO_DNF_UPDATE=1 / SENJIN_NO_FLATPAK_UPDATE=1 to skip
+# one of them.  Set SENJIN_TOOLBOX to use another container name, or run the
+# script inside `toolbox enter` yourself.  Without toolbox (Debian, Arch,
+# Alpine, plain Fedora, ...) it does not touch the host: it prints the install
+# command for the detected package manager and exits.
 #
 #   ./build-flatpak.sh [--debug] "/path/to/your/game/dump.zip"
 #   ./build-flatpak.sh [--debug] /path/to/dump.rar
@@ -170,18 +173,36 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# Run a command as root inside the toolbox.  Toolbx gives passwordless sudo;
+# if sudo still asks (no TTY under toolbox run), -S accepts a newline.
+run_as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    elif sudo -n "$@"; then
+        :
+    else
+        printf '\n' | sudo -S "$@"
+    fi
+}
+
+# Update the toolbox packages before building.  Only the toolbox is touched:
+# on a plain host the script must not run dnf on the user's system.
+update_toolbox_packages() {
+    [ "${SENJIN_NO_UPDATE:-0}" = "1" ] && return 0
+    [ "${SENJIN_NO_DNF_UPDATE:-0}" = "1" ] && return 0
+    in_toolbox || return 0
+    command -v dnf >/dev/null 2>&1 || return 0
+    echo "Updating the toolbox packages with dnf (SENJIN_NO_UPDATE=1 skips this)..."
+    run_as_root dnf upgrade --refresh -y ||
+        echo "warning: dnf upgrade failed; continuing with the installed packages." >&2
+}
+
+update_toolbox_packages
+
 # 1. Flatpak tooling.  Inside the toolbox, install what is missing: Fedora
 #    Atomic hosts cannot dnf-install it, and the toolbox has passwordless sudo.
 install_flatpak_packages() {
-    if [ "$(id -u)" -eq 0 ]; then
-        dnf install -y flatpak flatpak-builder
-    elif sudo dnf install -y flatpak flatpak-builder; then
-        :
-    else
-        # Toolbx gives the user an empty password.  If toolbox run has no TTY,
-        # sudo -S still accepts a newline without asking interactively.
-        printf '\n' | sudo -S dnf install -y flatpak flatpak-builder
-    fi
+    run_as_root dnf install -y flatpak flatpak-builder
 }
 
 if ! command -v flatpak >/dev/null 2>&1 ||
@@ -284,8 +305,29 @@ install_flatpak_ref() {
     return 1
 }
 
+# Refresh the runtime and SDK that this build uses.  They are updated in
+# whichever installation they belong to (user or system); a failure is only a
+# warning, so a build still works offline with the installed versions.
+update_flatpak_ref() {
+    ref="$1"
+    [ "${SENJIN_NO_UPDATE:-0}" = "1" ] && return 0
+    [ "${SENJIN_NO_FLATPAK_UPDATE:-0}" = "1" ] && return 0
+    if flatpak info --user "$ref" >/dev/null 2>&1; then
+        echo "Updating $ref (user)..."
+        flatpak update -y --noninteractive --user "$ref" ||
+            echo "warning: could not update $ref (user); using the installed version." >&2
+    fi
+    if flatpak info --system "$ref" >/dev/null 2>&1; then
+        echo "Updating $ref (system)..."
+        flatpak update -y --noninteractive --system "$ref" ||
+            echo "warning: could not update $ref (system); using the installed version." >&2
+    fi
+}
+
 install_flatpak_ref "$RUNTIME_REF" || exit 1
 install_flatpak_ref "$SDK_REF" || exit 1
+update_flatpak_ref "$RUNTIME_REF"
+update_flatpak_ref "$SDK_REF"
 
 # 4. Python build dependencies.  flatpak-builder needs them before it starts
 #    the build, and the build sandbox has no network: fetch the exact wheels

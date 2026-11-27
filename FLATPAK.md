@@ -18,6 +18,13 @@ supplied by the user and are not part of the repository.
   command for the detected distribution (`apt`, `dnf`, `pacman`, `zypper`,
   `apk`, `rpm-ostree`, ...).
 
+  On every run it also updates the toolbox packages
+  (`sudo dnf upgrade --refresh -y`) and the Freedesktop runtime/SDK
+  (`flatpak update`). Set `SENJIN_NO_UPDATE=1` to skip both,
+  `SENJIN_NO_DNF_UPDATE=1` to skip only the toolbox, or
+  `SENJIN_NO_FLATPAK_UPDATE=1` to skip only the runtime/SDK. The two Python
+  wheels stay pinned to their versions and SHA-256; they are not upgraded.
+
   To do it by hand instead:
 
   ```sh
@@ -73,9 +80,10 @@ dump is not copied again on every build. Pass another dump or delete
 `game.zip` to make the script search from scratch.
 
 The script checks the dump layout, installs the Freedesktop runtime and SDK if
-they are missing, downloads the two Python wheels if they are missing, builds
-with `flatpak-builder`, exports the result into the persistent `repo/`
-directory (ignored by git) and installs it through a single local remote called
+they are missing, updates them (and the toolbox packages) if they are already
+installed, downloads the two Python wheels if they are missing, builds with
+`flatpak-builder`, exports the result into the persistent `repo/` directory
+(ignored by git) and installs it through a single local remote called
 `senjin-local`. The manifest uses this
 directory as its source tree (`{"type": "dir", "path": "."}`), so it always
 builds the checkout you are running from; no source snapshot is needed.
@@ -209,6 +217,55 @@ the stored permission:
 flatpak permission-remove background background io.github.senjinaleste.Recomp
 ```
 
+## Renderer and Wayland
+
+The launcher runs the game only on Wayland (`SDL_VIDEODRIVER=wayland`); the
+manifest does not expose X11, so SDL cannot fall back to XWayland. If
+`WAYLAND_DISPLAY` is missing it prints an error and exits.
+
+The port itself draws with OpenGL 3.3. The launcher chooses the driver with
+the same idea as Racing Club+:
+
+- **VM with virtio-gpu** (`/sys/class/drm/card*/device/uevent` contains
+  `virtio`): OpenGL through **virgl**, with the Vulkan ICDs disabled because a
+  virtio VM only has Vulkan if the host enables Venus in QEMU. Expected output:
+
+  ```
+  Senjin Aleste: OpenGL por hardware (virtio/virgl).
+  Senjin Aleste: Wayland nativo.
+  ```
+
+- **Real GPU** (or a VM with a passed-through GPU): **Vulkan through zink**,
+  Mesa's OpenGL-over-Vulkan driver. Expected output:
+
+  ```
+  Senjin Aleste: Vulkan (OpenGL sobre Vulkan con zink).
+  Senjin Aleste: Wayland nativo.
+  ```
+
+  Before starting the game the launcher creates a hidden OpenGL context with
+  `senjin_aleste --gl-probe`. If zink cannot use a real Vulkan device (or Mesa
+  would fall back to llvmpipe/Lavapipe), it returns to native OpenGL instead of
+  running in software.
+
+`zink` does not add Vulkan to a VM: it uses a Vulkan driver that already
+exists. In a virtio VM that driver is Venus, which has to be enabled on the
+host (`virtio-gpu-gl` / `venus=on` in QEMU and a host GPU with Vulkan).
+Without it the guest has no hardware Vulkan, and staying on virgl is the
+correct choice.
+
+To choose by hand for one run (no `flatpak override` needed):
+
+```sh
+flatpak run --env=SENJIN_RENDERER=gl     io.github.senjinaleste.Recomp
+flatpak run --env=SENJIN_RENDERER=zink   io.github.senjinaleste.Recomp
+flatpak run --env=SENJIN_SOFTWARE_GL=1   io.github.senjinaleste.Recomp
+flatpak run --env=SENJIN_VIRTIO=1        io.github.senjinaleste.Recomp
+```
+
+`SENJIN_RENDERER=soft` is the same as `SENJIN_SOFTWARE_GL=1`;
+`SENJIN_VIRTIO=1` forces the virgl branch when the sandbox cannot read `/sys`.
+
 ## Where the game writes
 
 `/app` is read-only, but the game writes `config.txt`, `aleste.ini`,
@@ -230,7 +287,7 @@ rm -rf ~/.var/app/io.github.senjinaleste.Recomp/data/senjin-aleste
 
 ## Permissions
 
-- `--socket=wayland`, `--socket=fallback-x11`: Wayland, with X11 fallback.
+- `--socket=wayland`: Wayland only, with no X11 or XWayland.
 - `--socket=pulseaudio`, `--device=dri`, `--device=input`: audio, GPU and
   gamepads.
 - `--nofilesystem=home`, `--nofilesystem=host`, `--unshare=network`: no home,

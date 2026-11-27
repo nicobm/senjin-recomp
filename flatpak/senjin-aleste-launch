@@ -1,9 +1,12 @@
 #!/bin/sh
-# Flatpak launcher for Senjin Aleste.
+# Lanzador de Senjin Aleste dentro del Flatpak.
 #
-# /app is read-only, but the game writes config.txt, aleste.ini, save.dat,
-# rankings and replays into its own folder.  On first start we copy the game
-# data to the app's writable data directory and run it from there.
+# /app es de solo lectura, pero el juego escribe config.txt, aleste.ini,
+# save.dat, rankings y repeticiones en su carpeta. La primera vez copiamos los
+# datos del juego a la carpeta de datos de la app (~/.var/app/...) y lo
+# ejecutamos desde ahí.
+#
+# Solo Wayland: el manifiesto no expone X11 y SDL usa su driver wayland.
 set -eu
 
 APP_ID="io.github.senjinaleste.Recomp"
@@ -22,7 +25,7 @@ GAME_DIR="$DATA_HOME/senjin-aleste/game"
 mkdir -p "$GAME_DIR"
 
 if [ ! -f "$GAME_DIR/senxin_aleste_apm3.exe" ]; then
-    echo "senjin-aleste: copying the game data to $GAME_DIR (first run)..."
+    echo "Senjin Aleste: copiando los datos del juego a $GAME_DIR (primera vez)..."
 fi
 
 # Copy only files that are not there yet: settings and saves are never
@@ -34,9 +37,86 @@ cp -an "$SRC_DIR/." "$GAME_DIR/" 2>/dev/null || true
 chmod -R u+w "$GAME_DIR" 2>/dev/null || true
 
 if [ ! -f "$GAME_DIR/senxin_aleste_apm3.exe" ]; then
-    echo "senjin-aleste: could not copy the game data to $GAME_DIR" >&2
+    echo "Senjin Aleste: no se pudieron copiar los datos del juego." >&2
     exit 1
 fi
+
+# ---- Renderizador ----
+# El port dibuja con OpenGL 3.3.  En una VM con virtio-gpu el OpenGL lo da
+# virgl; en una GPU real preferimos Vulkan mediante zink (OpenGL sobre Vulkan
+# de Mesa).  zink no crea un Vulkan: necesita un Vulkan que funcione, y si no
+# lo hay vuelve solo a OpenGL.  Por eso en la VM usamos virgl directamente.
+#
+# SENJIN_RENDERER=gl|zink|soft tiene la última palabra.
+# SENJIN_SOFTWARE_GL=1 usa llvmpipe (OpenGL por software).
+IS_VIRTIO=0
+if [ "${SENJIN_VIRTIO:-0}" = "1" ] ||
+    grep -qi 'virtio' /sys/class/drm/card*/device/uevent 2>/dev/null; then
+    IS_VIRTIO=1
+fi
+
+RENDERER="${SENJIN_RENDERER:-}"
+if [ "${SENJIN_SOFTWARE_GL:-0}" = "1" ]; then
+    RENDERER=soft
+elif [ -z "$RENDERER" ]; then
+    if [ "$IS_VIRTIO" = "1" ]; then RENDERER=gl; else RENDERER=zink; fi
+fi
+
+# Solo Wayland: sin socket X11 en el sandbox, SDL no puede caer en XWayland.
+if [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    echo "Senjin Aleste: hace falta una sesión Wayland (este Flatpak no incluye X11)." >&2
+    exit 1
+fi
+export SDL_VIDEODRIVER=wayland
+
+case "$RENDERER" in
+    soft)
+        unset MESA_LOADER_DRIVER_OVERRIDE GALLIUM_DRIVER
+        export LIBGL_ALWAYS_SOFTWARE=1
+        ;;
+    gl)
+        unset MESA_LOADER_DRIVER_OVERRIDE GALLIUM_DRIVER LIBGL_ALWAYS_SOFTWARE
+        # En una VM virtio solo hay Vulkan si el host habilita Venus en QEMU.
+        # Apagamos los ICDs para que nada intente enumerarlo al arrancar.
+        export VK_DRIVER_FILES="${VK_DRIVER_FILES-/nonexistent}"
+        ;;
+    zink)
+        unset GALLIUM_DRIVER LIBGL_ALWAYS_SOFTWARE
+        export MESA_LOADER_DRIVER_OVERRIDE=zink
+        # Comprobamos que zink tenga un Vulkan utilizable de verdad.  Si no lo
+        # hay, Mesa cae a llvmpipe (software) y el juego iría lentísimo: en ese
+        # caso volvemos a OpenGL nativo.  La sonda usa el mismo SDL/GL que el
+        # juego y devuelve la cadena del renderizador.
+        probe=$(/app/bin/senjin_aleste --gl-probe 2>/dev/null || true)
+        case "$probe" in
+            *llvmpipe*|*lavapipe*|*swrast*|*softpipe*) zink_ok=0 ;;
+            *zink*) zink_ok=1 ;;
+            *) zink_ok=0 ;;
+        esac
+        if [ "$zink_ok" = 0 ]; then
+            echo "Senjin Aleste: Vulkan no disponible; se usa OpenGL nativo." >&2
+            unset MESA_LOADER_DRIVER_OVERRIDE GALLIUM_DRIVER
+            RENDERER=gl
+        fi
+        ;;
+    *)
+        echo "Senjin Aleste: renderizador desconocido '$RENDERER' (usá gl, zink o soft)." >&2
+        exit 1
+        ;;
+esac
+
+case "$RENDERER" in
+    soft) echo "Senjin Aleste: OpenGL por software (llvmpipe)." ;;
+    gl)
+        if [ "$IS_VIRTIO" = "1" ]; then
+            echo "Senjin Aleste: OpenGL por hardware (virtio/virgl)."
+        else
+            echo "Senjin Aleste: OpenGL por hardware."
+        fi
+        ;;
+    zink) echo "Senjin Aleste: Vulkan (OpenGL sobre Vulkan con zink)." ;;
+esac
+echo "Senjin Aleste: Wayland nativo."
 
 # The game reads aleste.ini / config.txt from the current directory.
 cd "$GAME_DIR"

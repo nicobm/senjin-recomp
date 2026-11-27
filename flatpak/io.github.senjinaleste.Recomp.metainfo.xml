@@ -19,6 +19,11 @@
     <category>Game</category>
   </categories>
   <releases>
+    <release version="0.6.22" date="2026-11-27">
+      <description>
+        <p>Flatpak: Wayland only, virgl in VMs and Vulkan through zink on real GPUs.</p>
+      </description>
+    </release>
     <release version="0.6.21" date="2026-11-11">
       <description>
         <p>Linux: crash on Wayland fixed.</p>

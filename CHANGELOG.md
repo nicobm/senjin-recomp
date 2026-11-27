@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.6.22 — Flatpak: Wayland only, virgl in VMs and Vulkan via zink
+- The Flatpak drops the X11 fallback: the launcher forces SDL's Wayland driver and refuses to start without a Wayland session.
+- Renderer selection follows the same idea as Racing Club+: a virtio-gpu VM uses OpenGL through virgl; a real GPU prefers Vulkan through Mesa zink. A hidden OpenGL probe (`senjin_aleste --gl-probe`) checks that zink really got a hardware Vulkan device, so the game never falls back silently to llvmpipe/Lavapipe: it goes back to native OpenGL instead.
+- `build-flatpak.sh` now updates the toolbox packages with `dnf upgrade` and the Freedesktop runtime/SDK with `flatpak update` on every run. `SENJIN_NO_UPDATE=1` skips both; `SENJIN_NO_DNF_UPDATE=1` and `SENJIN_NO_FLATPAK_UPDATE=1` skip one of them.
+
 ## v0.6.21 — Linux: crash on Wayland fixed (#7)
 - On a Wayland desktop (e.g. GNOME on Fedora, SDL3 through sdl2-compat), the game crashed at start-up with `g_free: invalid pointer`. The native layer's game-heap functions were named `g_free`, `g_realloc` and `g_strdup`, like GLib's; on some systems the binary exported them, and the GTK window-decoration plugin loaded on Wayland called them instead of GLib's. They are renamed (`gh_*`), and `build_native.sh` now warns if the binary exports any of its own symbols. No more need for `SDL_VIDEODRIVER=x11`.
 
